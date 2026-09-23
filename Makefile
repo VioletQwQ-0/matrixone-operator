@@ -32,9 +32,18 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 push:
 	docker push ${IMG}
 
+# Build the native libraries required by the pinned MatrixOne module. Keep
+# them in that module's directory so its SRCDIR-relative CGO flags resolve.
+.PHONY: matrixone-native
+matrixone-native:
+	@mo_dir="$$(GOWORK=off go list -m -f '{{.Dir}}' github.com/matrixorigin/matrixone)" && \
+		chmod -R u+w "$$mo_dir/thirdparties" "$$mo_dir/cgo" && \
+		$(MAKE) -C "$$mo_dir/thirdparties" -j4 usearch xxhash croaring jemalloc && \
+		$(MAKE) -C "$$mo_dir/cgo" -j4
+
 # Build manager binary
-manager: generate fmt vet
-	CGO_ENABLED=0 go build -o manager cmd/operator/main.go
+manager: generate fmt vet matrixone-native
+	CGO_ENABLED=1 go build -o manager cmd/operator/main.go
 
 ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 .PHONY: manifests
@@ -110,8 +119,8 @@ fmt:
 	go fmt ./...
 
 # Run go vet against code
-vet:
-	go vet ./...
+vet: matrixone-native
+	CGO_ENABLED=1 go vet ./...
 
 # helm lint
 helm-lint:
@@ -145,9 +154,9 @@ envtest: $(LOCALBIN) ## Install the pinned setup-envtest version if necessary.
 test: api-test unit
 
 # Run unit tests
-unit: generate fmt vet manifests envtest
+unit: generate fmt vet manifests envtest matrixone-native
 	@assets="$$( $(ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" && \
-		KUBEBUILDER_ASSETS="$$assets" CGO_ENABLED=0 go test ./pkg/... -coverprofile cover.out
+		KUBEBUILDER_ASSETS="$$assets" CGO_ENABLED=1 go test ./pkg/... -coverprofile cover.out
 
 api-test:
 	cd api && make test
@@ -167,8 +176,10 @@ e2e: ginkgo
 	REPO=${REPO} TAG=${TAG} MO_IMAGE_REPO=$(MO_IMAGE_REPO) MO_VERSION=$(MO_VERSION) GINKGO=$(GINKGO)  ./hack/e2e.sh
 
 # Run against the configured Kubernetes cluster in ~/.kube/config
-run: generate fmt vet manifests install
-	CGO_ENABLED=0 go run cmd/operator/main.go
+run: generate fmt vet manifests install matrixone-native
+	@mo_dir="$$(GOWORK=off go list -m -f '{{.Dir}}' github.com/matrixorigin/matrixone)" && \
+		LD_LIBRARY_PATH="$$mo_dir/thirdparties/install/lib:$${LD_LIBRARY_PATH:-}" \
+		CGO_ENABLED=1 go run cmd/operator/main.go
 
 # Install CRDs into a cluster
 install: manifests
