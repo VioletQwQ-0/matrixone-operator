@@ -144,6 +144,34 @@ func TestObserveDrainBlockedMatrix(t *testing.T) {
 	}
 }
 
+func TestObserveDrainAcceptedResponseLostThenCompleted(t *testing.T) {
+	f := newObserveFixture(t)
+	f.round(t)
+	f.round(t)
+	f.lock.lostResponseOnce = true
+	requesting := f.round(t)
+	first, err := readDrainAttempt(requesting)
+	if err != nil || first == nil || first.Phase != drainPhaseRequesting ||
+		len(requesting.Finalizers) != 1 || len(f.lock.calls) != 1 {
+		t.Fatalf("lost response released or lost the request: %#v %v, calls=%v", first, err, f.lock.calls)
+	}
+	requested := f.round(t)
+	second, err := readDrainAttempt(requested)
+	if err != nil || second == nil || second.Phase != drainPhaseRequested ||
+		second.AttemptID != first.AttemptID || len(requested.Finalizers) != 1 {
+		t.Fatalf("retry did not persist the same accepted attempt: %#v %v", second, err)
+	}
+	completed := f.round(t)
+	third, err := readDrainAttempt(completed)
+	if err != nil || third == nil || third.Phase != drainPhaseCompleted || len(completed.Finalizers) != 0 {
+		t.Fatalf("query did not authorize the current attempt: %#v %v", third, err)
+	}
+	if len(f.lock.calls) != 3 ||
+		f.lock.calls[0] != "set" || f.lock.calls[1] != "set" || f.lock.calls[2] != "can" {
+		t.Fatalf("unexpected release or RPC sequence: finalizers=%v calls=%v", completed.Finalizers, f.lock.calls)
+	}
+}
+
 func TestObserveInstanceBoundDrainProof(t *testing.T) {
 	for _, fault := range []string{"identity-missing", "identity-changed", "proof-mismatch", "allocator-missing", "query-instance-changed"} {
 		t.Run(fault, func(t *testing.T) {

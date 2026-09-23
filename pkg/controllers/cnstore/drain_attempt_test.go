@@ -30,14 +30,16 @@ import (
 )
 
 type fakeLockMigrationClient struct {
-	calls       []string
-	setOK       bool
-	canOK       bool
-	setErr      error
-	canErr      error
-	beforeSet   func()
-	beforeCan   func()
-	proofMutate func(*mocli.DrainProof)
+	calls            []string
+	setOK            bool
+	canOK            bool
+	setErr           error
+	lostResponseOnce bool
+	acceptedAttempt  string
+	canErr           error
+	beforeSet        func()
+	beforeCan        func()
+	proofMutate      func(*mocli.DrainProof)
 }
 
 func (f *fakeLockMigrationClient) BeginDrain(_ context.Context, serviceID, attemptID string) (mocli.DrainProof, error) {
@@ -45,6 +47,16 @@ func (f *fakeLockMigrationClient) BeginDrain(_ context.Context, serviceID, attem
 		f.beforeSet()
 	}
 	f.calls = append(f.calls, "set")
+	if f.lostResponseOnce {
+		// The server accepted this attempt, but the client never received its
+		// proof. The next reconcile must retry the same durable attempt.
+		f.lostResponseOnce = false
+		f.acceptedAttempt = attemptID
+		return mocli.DrainProof{}, fmt.Errorf("accepted drain response lost")
+	}
+	if f.acceptedAttempt != "" && f.acceptedAttempt != attemptID {
+		return mocli.DrainProof{}, fmt.Errorf("different attempt after lost response")
+	}
 	if f.setErr != nil || !f.setOK {
 		if f.setErr != nil {
 			return mocli.DrainProof{}, f.setErr
