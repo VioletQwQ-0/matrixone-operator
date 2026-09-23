@@ -187,6 +187,8 @@ e2e: ginkgo
 # Run against the configured Kubernetes cluster in ~/.kube/config
 run: generate fmt vet manifests install matrixone-native
 	@mo_dir="$$(GOWORK=off go list -m -f '{{.Dir}}' github.com/matrixorigin/matrixone)" && \
+		CGO_CFLAGS="-I$$mo_dir/thirdparties/install/include" \
+		CGO_LDFLAGS="-L$$mo_dir/thirdparties/install/lib" \
 		LD_LIBRARY_PATH="$$mo_dir/thirdparties/install/lib:$${LD_LIBRARY_PATH:-}" \
 		CGO_ENABLED=1 go run cmd/operator/main.go
 
