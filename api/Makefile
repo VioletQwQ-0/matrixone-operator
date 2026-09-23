@@ -68,6 +68,6 @@ define go-install-pinned
 	actual_version="$$(go version -m "$(1)" 2>/dev/null | awk -v module="$(2)" '$$1 == "mod" && $$2 == module { print $$3 }')"; \
 	if [ "$$actual_version" != "$(4)" ]; then \
 		echo "Installing $(3)@$(4) (found: $${actual_version:-none})"; \
-		GOBIN=$(LOCALBIN) $(5) go install $(3)@$(4); \
+		GOBIN=$(LOCALBIN) GOWORK=off $(5) go install $(3)@$(4); \
 	fi
 endef

@@ -43,7 +43,9 @@ matrixone-native:
 
 # Build manager binary
 manager: generate fmt vet matrixone-native
-	CGO_ENABLED=1 go build -o manager cmd/operator/main.go
+	@mo_dir="$$(GOWORK=off go list -m -f '{{.Dir}}' github.com/matrixorigin/matrixone)" && \
+		CGO_ENABLED=1 CGO_CFLAGS="-I$$mo_dir/thirdparties/install/include" \
+		CGO_LDFLAGS="-L$$mo_dir/thirdparties/install/lib" go build -o manager cmd/operator/main.go
 
 ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 .PHONY: manifests
@@ -120,7 +122,9 @@ fmt:
 
 # Run go vet against code
 vet: matrixone-native
-	CGO_ENABLED=1 go vet ./...
+	@mo_dir="$$(GOWORK=off go list -m -f '{{.Dir}}' github.com/matrixorigin/matrixone)" && \
+		CGO_ENABLED=1 CGO_CFLAGS="-I$$mo_dir/thirdparties/install/include" \
+		CGO_LDFLAGS="-L$$mo_dir/thirdparties/install/lib" go vet ./...
 
 # helm lint
 helm-lint:
@@ -156,7 +160,12 @@ test: api-test unit
 # Run unit tests
 unit: generate fmt vet manifests envtest matrixone-native
 	@assets="$$( $(ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" && \
-		KUBEBUILDER_ASSETS="$$assets" CGO_ENABLED=1 go test ./pkg/... -coverprofile cover.out
+		mo_dir="$$(GOWORK=off go list -m -f '{{.Dir}}' github.com/matrixorigin/matrixone)" && \
+		KUBEBUILDER_ASSETS="$$assets" CGO_ENABLED=1 \
+		CGO_CFLAGS="-I$$mo_dir/thirdparties/install/include" \
+		CGO_LDFLAGS="-L$$mo_dir/thirdparties/install/lib" \
+		LD_LIBRARY_PATH="$$mo_dir/thirdparties/install/lib:$${LD_LIBRARY_PATH:-}" \
+		go test ./pkg/... -coverprofile cover.out
 
 api-test:
 	cd api && make test
