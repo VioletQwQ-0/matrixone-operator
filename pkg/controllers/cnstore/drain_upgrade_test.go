@@ -17,6 +17,7 @@ package cnstore
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -27,8 +28,151 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
+
+type transientCloneSetReader struct {
+	client.Reader
+	fail bool
+}
+
+func (r *transientCloneSetReader) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if _, ok := obj.(*kruise.CloneSet); ok && r.fail {
+		return fmt.Errorf("temporary CloneSet API read failure")
+	}
+	return r.Reader.Get(ctx, key, obj, opts...)
+}
+
+func TestObserveUpgradeTransientOwnerReadCanRetry(t *testing.T) {
+	for _, prepared := range []bool{false, true} {
+		t.Run(fmt.Sprintf("prepared-%v", prepared), func(t *testing.T) {
+			f := newObserveFixture(t)
+			p := f.read(t)
+			p.Labels[pub.LifecycleStateKey] = string(pub.LifecycleStatePreparingUpdate)
+			cs := bindTestCloneSet(p)
+			if err := f.cli.Create(context.Background(), cs); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.cli.Update(context.Background(), p); err != nil {
+				t.Fatal(err)
+			}
+			f.round(t) // Persist the original drain start time.
+			if prepared {
+				f.round(t) // Persist Prepared, before any lock RPC.
+			}
+			reader := &transientCloneSetReader{Reader: f.cli, fail: true}
+			f.c.apiReader = reader
+			p = f.round(t)
+			if p.Annotations[drainRecoveryAnno] != "" {
+				t.Fatal("transient owner read became permanent recovery")
+			}
+			a, err := readDrainAttempt(p)
+			if err != nil || (prepared && (a == nil || a.Phase != drainPhasePrepared)) {
+				t.Fatalf("transient owner read damaged the prepared attempt: %#v %v", a, err)
+			}
+			if len(f.lock.calls) != 0 {
+				t.Fatal("lock drain started without upgrade ownership proof")
+			}
+			reader.fail = false
+			for i := 0; i < 4; i++ {
+				p = f.round(t)
+			}
+			a, err = readDrainAttempt(p)
+			if err != nil || a == nil || a.Phase != drainPhaseCompleted || len(f.lock.calls) != 2 {
+				t.Fatalf("owner read recovery did not complete the same drain: %#v %v, calls=%v", a, err, f.lock.calls)
+			}
+		})
+	}
+}
+
+func TestObserveUpgradeCompletionTransientOwnerReadCanRetry(t *testing.T) {
+	f := completedUpgradeFixture(t)
+	reader := &transientCloneSetReader{Reader: f.cli, fail: true}
+	f.c.apiReader = reader
+	p := f.round(t)
+	a, err := readDrainAttempt(p)
+	if err != nil || a == nil || a.Phase != drainPhaseCompleted || p.Annotations[drainRecoveryAnno] != "" {
+		t.Fatalf("transient owner read destroyed completed proof: %#v %v", a, err)
+	}
+	if cond := common.GetReadinessCondition(p, common.CNStoreReadiness); cond == nil || cond.Status != corev1.ConditionFalse {
+		t.Fatal("transient owner read admitted business")
+	}
+	reader.fail = false
+	for i := 0; i < 3; i++ {
+		p = f.round(t)
+	}
+	if a, err := readDrainAttempt(p); err != nil || a != nil {
+		t.Fatalf("completed upgrade did not recover after owner read: %#v %v", a, err)
+	}
+	if len(f.lock.calls) != 2 || !controllerutil.ContainsFinalizer(p, common.CNDrainingFinalizer) {
+		t.Fatal("owner read retry repeated lock handshake or lost protection")
+	}
+}
+
+func TestObserveUpgradeRequestedTransientOwnerReadCanRetry(t *testing.T) {
+	f := newObserveFixture(t)
+	p := f.read(t)
+	p.Labels[pub.LifecycleStateKey] = string(pub.LifecycleStatePreparingUpdate)
+	cs := bindTestCloneSet(p)
+	if err := f.cli.Create(context.Background(), cs); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.cli.Update(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		p = f.round(t)
+	}
+	a, err := readDrainAttempt(p)
+	if err != nil || a == nil || a.Phase != drainPhaseRequested || len(f.lock.calls) != 1 {
+		t.Fatalf("test did not reach a persisted request: %#v %v, calls=%v", a, err, f.lock.calls)
+	}
+	reader := &transientCloneSetReader{Reader: f.cli, fail: true}
+	f.c.apiReader = reader
+	p = f.round(t)
+	a, err = readDrainAttempt(p)
+	if err != nil || a == nil || a.Phase != drainPhaseRequested || len(f.lock.calls) != 1 {
+		t.Fatalf("transient owner read lost requested attempt: %#v %v, calls=%v", a, err, f.lock.calls)
+	}
+	reader.fail = false
+	p = f.round(t)
+	a, err = readDrainAttempt(p)
+	if err != nil || a == nil || a.Phase != drainPhaseCompleted || len(f.lock.calls) != 2 {
+		t.Fatalf("requested drain did not resume after owner read: %#v %v, calls=%v", a, err, f.lock.calls)
+	}
+}
+
+func TestObserveUpgradeUnobservedOwnerCanCatchUp(t *testing.T) {
+	f := completedUpgradeFixture(t)
+	p := f.read(t)
+	cs := &kruise.CloneSet{}
+	if err := f.cli.Get(context.Background(), client.ObjectKey{Namespace: p.Namespace, Name: "cloneset"}, cs); err != nil {
+		t.Fatal(err)
+	}
+	cs.Generation++
+	if err := f.cli.Update(context.Background(), cs); err != nil {
+		t.Fatal(err)
+	}
+	p = f.round(t)
+	a, err := readDrainAttempt(p)
+	if err != nil || a == nil || a.Phase != drainPhaseCompleted {
+		t.Fatalf("unobserved owner destroyed completed proof: %#v %v", a, err)
+	}
+	if err := f.cli.Get(context.Background(), client.ObjectKeyFromObject(cs), cs); err != nil {
+		t.Fatal(err)
+	}
+	cs.Status.ObservedGeneration = cs.Generation
+	if err := f.cli.Update(context.Background(), cs); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		p = f.round(t)
+	}
+	if a, err := readDrainAttempt(p); err != nil || a != nil || len(f.lock.calls) != 2 {
+		t.Fatalf("observed owner did not resume authorized upgrade: %#v %v, calls=%v", a, err, f.lock.calls)
+	}
+}
 
 func bindTestCloneSet(pod *corev1.Pod) *kruise.CloneSet {
 	controller := true

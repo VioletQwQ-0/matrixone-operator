@@ -17,6 +17,7 @@ package cnstore
 import (
 	"crypto/sha256"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"strings"
 	"time"
@@ -29,10 +30,13 @@ import (
 	kruise "github.com/openkruise/kruise-api/apps/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
+
+var errUpgradeOwnerObservationPending = stderrors.New("CN upgrade CloneSet observation is pending")
 
 func (a *drainAttempt) identityHash() string {
 	base := drainAttemptID(a.PodUID, a.CNUUID, a.ContainerID, a.ContainerStartedAt, a.DrainStartedAt, a.Lifecycle)
@@ -67,10 +71,16 @@ func (c *withCNSet) upgradeOwner(ctx *recon.Context[*corev1.Pod], pod *corev1.Po
 	}
 	cs := &kruise.CloneSet{}
 	if err := c.apiReader.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: owner.Name}, cs); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("%w: %v", errUpgradeOwnerObservationPending, err)
+		}
 		return nil, err
 	}
-	if cs.UID != owner.UID || !cs.DeletionTimestamp.IsZero() || cs.Status.ObservedGeneration != cs.Generation {
-		return nil, errors.New("CN upgrade CloneSet identity or observed generation changed")
+	if cs.UID != owner.UID || !cs.DeletionTimestamp.IsZero() {
+		return nil, errors.New("CN upgrade CloneSet identity changed")
+	}
+	if cs.Status.ObservedGeneration != cs.Generation {
+		return nil, errUpgradeOwnerObservationPending
 	}
 	return cs, nil
 }
@@ -111,6 +121,9 @@ func (c *withCNSet) recoverCompletedUpgrade(ctx *recon.Context[*corev1.Pod], pod
 		return c.requireRecovery(ctx, "CN upgrade instance changed")
 	}
 	cs, err := c.upgradeOwner(ctx, pod)
+	if stderrors.Is(err, errUpgradeOwnerObservationPending) {
+		return drainBlocked(ctx, err.Error())
+	}
 	if err != nil || string(cs.UID) != a.CloneSetUID || cs.Status.UpdateRevision != a.TargetRevision {
 		return c.requireRecovery(ctx, "CN upgrade owner or target changed")
 	}

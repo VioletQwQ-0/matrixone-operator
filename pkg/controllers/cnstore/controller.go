@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"net"
 	"reflect"
@@ -373,6 +374,9 @@ func (c *withCNSet) ensureDrainAttempt(ctx *recon.Context[*corev1.Pod], uid stri
 	}
 	if lifecycle == drainLifecycleUpdate {
 		if err := c.bindUpgrade(ctx, fresh, current); err != nil {
+			if stderrors.Is(err, errUpgradeOwnerObservationPending) {
+				return nil, drainBlocked(ctx, err.Error())
+			}
 			return nil, c.requireRecovery(ctx, err.Error())
 		}
 	}

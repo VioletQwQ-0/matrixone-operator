@@ -80,6 +80,7 @@ func TestObserveUpgradeCompletionFaultMatrix(t *testing.T) {
 						cs.Status.UpdateRevision = "other"
 					} else {
 						cs.Generation++
+						waiting = true
 					}
 					if err := f.cli.Update(context.Background(), cs); err != nil {
 						t.Fatal(err)
