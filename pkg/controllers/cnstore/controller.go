@@ -163,6 +163,10 @@ func advanceLockDrain(ctx context.Context, _ string, attempt *drainAttempt, clie
 		if err != nil {
 			return false, false, err
 		}
+		if proof.ServiceID != attempt.LockServiceID || proof.AttemptID != attempt.AttemptID ||
+			proof.AllocatorID == "" || proof.AllocatorVersion == 0 {
+			return false, false, errors.New("CN lock-service drain proof does not match the current attempt")
+		}
 		attempt.AllocatorID, attempt.AllocatorVersion = proof.AllocatorID, proof.AllocatorVersion
 		return false, true, nil
 	case drainPhaseRequested:

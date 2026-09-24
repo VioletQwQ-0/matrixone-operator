@@ -140,6 +140,30 @@ func TestAdvanceLockDrainRequiresRequestBeforeCanRestart(t *testing.T) {
 	}
 }
 
+func TestAdvanceLockDrainRejectsMismatchedBeginProof(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*mocli.DrainProof)
+	}{
+		{"service", func(p *mocli.DrainProof) { p.ServiceID = "other-instance" }},
+		{"attempt", func(p *mocli.DrainProof) { p.AttemptID = "other-attempt" }},
+		{"allocator", func(p *mocli.DrainProof) { p.AllocatorID = "" }},
+		{"epoch", func(p *mocli.DrainProof) { p.AllocatorVersion = 0 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			attempt := &drainAttempt{AttemptID: "attempt", LockServiceID: "instance-cn", Phase: drainPhaseRequesting}
+			fake := &fakeLockMigrationClient{setOK: true, canOK: true, proofMutate: tc.mutate}
+			safe, requested, err := advanceLockDrain(context.Background(), "cn", attempt, fake)
+			if err == nil || safe || requested || attempt.AllocatorID != "" || attempt.AllocatorVersion != 0 {
+				t.Fatalf("invalid proof advanced the attempt: safe=%v requested=%v attempt=%#v err=%v", safe, requested, attempt, err)
+			}
+			if len(fake.calls) != 1 || fake.calls[0] != "set" {
+				t.Fatalf("invalid proof queried completion: %v", fake.calls)
+			}
+		})
+	}
+}
+
 func TestAdvanceLockDrainDoesNotTreatCanRestartAsInitialProof(t *testing.T) {
 	fake := &fakeLockMigrationClient{setOK: true, canOK: true}
 	attempt := &drainAttempt{PodUID: "pod", CNUUID: "cn", ContainerID: "container", ContainerStartedAt: "started", DrainStartedAt: "drain", AttemptID: "attempt", LockServiceID: "instance-cn", Phase: drainPhasePrepared}

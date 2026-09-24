@@ -195,6 +195,20 @@ func TestObserveInstanceBoundDrainProof(t *testing.T) {
 				f.lock.proofMutate = func(p *mocli.DrainProof) { p.AllocatorID = "" }
 			}
 			p := f.round(t)
+			if fault == "proof-mismatch" || fault == "allocator-missing" {
+				for round := 0; round < 2; round++ {
+					p = f.round(t)
+				}
+				a, err := readDrainAttempt(p)
+				if err != nil || a == nil || a.Phase != drainPhaseRequesting {
+					t.Fatalf("%s must retain Requesting without an accepted proof: %#v %v", fault, a, err)
+				}
+				for _, call := range f.lock.calls {
+					if call != "set" {
+						t.Fatalf("%s queried completion before proof validation: %v", fault, f.lock.calls)
+					}
+				}
+			}
 			if fault == "query-instance-changed" {
 				a, err := readDrainAttempt(p)
 				if err != nil || a == nil || a.Phase != drainPhaseRequested {

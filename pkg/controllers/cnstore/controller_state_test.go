@@ -17,6 +17,7 @@ package cnstore
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -291,22 +292,28 @@ func TestVerifyDrainAttemptRejectsReplacementReadFromAPI(t *testing.T) {
 	}
 	attempt.Phase = drainPhaseRequested
 	attempt.RestartRequested = true
+	attempt.LockServiceID = "instance-" + uid
+	attempt.AllocatorID = "allocator"
+	attempt.AllocatorVersion = 1
 	payload, err := marshalDrainAttempt(attempt)
 	if err != nil {
 		t.Fatal(err)
 	}
 	pod.Annotations[drainAttemptAnno] = payload
 	cli := cnStoreTestClient(t, pod)
+	ctx := reconfake.NewContext(pod, cli, nil)
+	wc := &withCNSet{Controller: &Controller{apiReader: cli}}
+	if _, err := wc.verifyDrainAttempt(ctx, attempt); err != nil {
+		t.Fatalf("unchanged requested attempt must be valid: %v", err)
+	}
 
 	replacement := pod.DeepCopy()
 	replacement.Status.ContainerStatuses[0].ContainerID = "containerd://main-2"
 	if err := cli.Status().Update(context.Background(), replacement); err != nil {
 		t.Fatal(err)
 	}
-	ctx := reconfake.NewContext(pod, cli, nil)
-	wc := &withCNSet{Controller: &Controller{apiReader: cli}}
-	if _, err := wc.verifyDrainAttempt(ctx, attempt); err == nil {
-		t.Fatal("replacement main container must invalidate a stale completion proof")
+	if _, err := wc.verifyDrainAttempt(ctx, attempt); err == nil || !strings.Contains(err.Error(), "actual instance or lifecycle changed") {
+		t.Fatalf("replacement main container must fail the actual identity check: %v", err)
 	}
 }
 

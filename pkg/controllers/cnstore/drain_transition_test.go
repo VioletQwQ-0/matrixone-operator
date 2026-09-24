@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -143,6 +144,14 @@ func TestCompletionSnapshotRejectsChangedAttempt(t *testing.T) {
 			pod := cnStoreTestPod(pub.LifecycleStatePreparingDelete, false)
 			a, _ := newDrainAttempt(pod, v1alpha1.GetCNPodUUID(pod), time.Unix(10, 0), drainLifecycleDelete)
 			a.Phase, a.RestartRequested = drainPhaseRequested, true
+			a.LockServiceID, a.AllocatorID, a.AllocatorVersion = "instance-"+a.CNUUID, "allocator", 1
+			unchanged := pod.DeepCopy()
+			unchanged.Annotations[drainAttemptAnno], _ = marshalDrainAttempt(a)
+			controlClient := cnStoreTestClient(t, unchanged)
+			control := &withCNSet{Controller: &Controller{apiReader: controlClient}}
+			if _, err := control.verifyDrainAttempt(reconfake.NewContext(unchanged, controlClient, nil), a); err != nil {
+				t.Fatalf("unchanged requested attempt must be valid: %v", err)
+			}
 			stored := *a
 			switch change {
 			case "cnUUID":
@@ -154,10 +163,17 @@ func TestCompletionSnapshotRejectsChangedAttempt(t *testing.T) {
 				stored.Phase = drainPhaseRecovery
 			}
 			pod.Annotations[drainAttemptAnno], _ = marshalDrainAttempt(&stored)
+			if _, err := readDrainAttempt(pod); err != nil {
+				t.Fatalf("changed fixture must remain a valid drain attempt: %v", err)
+			}
 			cli := cnStoreTestClient(t, pod)
 			wc := &withCNSet{Controller: &Controller{apiReader: cli}}
-			if _, err := wc.verifyDrainAttempt(reconfake.NewContext(pod, cli, nil), a); err == nil {
-				t.Fatal("stale query authorized completion")
+			want := "request snapshot changed"
+			if change == "cnUUID" {
+				want = "actual instance or lifecycle changed"
+			}
+			if _, err := wc.verifyDrainAttempt(reconfake.NewContext(pod, cli, nil), a); err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("stale query did not fail the %q guard: %v", want, err)
 			}
 		})
 	}
@@ -172,6 +188,25 @@ func TestPersistDrainPhaseRejectsStaleSource(t *testing.T) {
 				t.Fatal(err)
 			}
 			expected.Phase = drainPhaseRequesting
+			expected.LockServiceID = "instance-" + expected.CNUUID
+			proof := mocli.DrainProof{ServiceID: expected.LockServiceID, AttemptID: expected.AttemptID, AllocatorID: "allocator", AllocatorVersion: 1}
+			unchanged := pod.DeepCopy()
+			unchanged.Annotations[drainAttemptAnno], err = marshalDrainAttempt(expected)
+			if err != nil {
+				t.Fatal(err)
+			}
+			controlClient := cnStoreTestClient(t, unchanged)
+			control := &withCNSet{Controller: &Controller{apiReader: controlClient}}
+			if err := control.persistDrainTransition(reconfake.NewContext(unchanged, controlClient, nil), expected, drainPhaseRequested, "", proof); err != nil {
+				t.Fatalf("unchanged Requesting attempt must advance: %v", err)
+			}
+			advanced := &corev1.Pod{}
+			if err := controlClient.Get(context.Background(), client.ObjectKeyFromObject(unchanged), advanced); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := readDrainAttempt(advanced); err != nil || got == nil || got.Phase != drainPhaseRequested {
+				t.Fatalf("unchanged request did not persist Requested: %#v %v", got, err)
+			}
 			stored := *expected
 			switch change {
 			case "container":
@@ -180,6 +215,7 @@ func TestPersistDrainPhaseRejectsStaleSource(t *testing.T) {
 				pod.UID = "replacement"
 			case "phase":
 				stored.Phase = drainPhasePrepared
+				stored.LockServiceID = ""
 			case "cnUUID":
 				pod.Spec.Subdomain = "replacement"
 			}
@@ -188,11 +224,18 @@ func TestPersistDrainPhaseRejectsStaleSource(t *testing.T) {
 				t.Fatal(err)
 			}
 			pod.Annotations[drainAttemptAnno] = string(payload)
+			if _, err := readDrainAttempt(pod); err != nil {
+				t.Fatalf("changed fixture must remain a valid drain attempt: %v", err)
+			}
 			cli := cnStoreTestClient(t, pod)
 			wc := &withCNSet{Controller: &Controller{apiReader: cli}}
 			ctx := reconfake.NewContext(pod.DeepCopy(), cli, nil)
-			if err := wc.persistDrainPhase(ctx, expected, drainPhaseRequested); err == nil {
-				t.Fatal("stale request response advanced the persisted phase")
+			want := "actual instance or lifecycle changed"
+			if change == "phase" {
+				want = "request snapshot changed"
+			}
+			if err := wc.persistDrainTransition(ctx, expected, drainPhaseRequested, "", proof); err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("stale request response did not fail the %q guard: %v", want, err)
 			}
 			fresh := &corev1.Pod{}
 			if err := cli.Get(context.Background(), client.ObjectKeyFromObject(pod), fresh); err != nil {
