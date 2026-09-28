@@ -104,6 +104,7 @@ func TestObserveDrainBlockedMatrix(t *testing.T) {
 				f.lock.canErr = fmt.Errorf("does not exist")
 			case "timeout":
 				f.c.now = func() time.Time { return time.Unix(20, 0).Add(24 * time.Hour) }
+				f.lock.canOK = false
 			case "malformed", "sidecar-only":
 				p := f.read(t)
 				if fault == "malformed" {
@@ -137,7 +138,7 @@ func TestObserveDrainBlockedMatrix(t *testing.T) {
 					t.Fatal("fault authorized completion")
 				}
 			}
-			if (fault == "timeout" || fault == "disabled" || fault == "malformed" || fault == "sidecar-only") && len(f.lock.calls) != 0 {
+			if (fault == "disabled" || fault == "malformed" || fault == "sidecar-only") && len(f.lock.calls) != 0 {
 				t.Fatalf("blocked admission called RPC: %v", f.lock.calls)
 			}
 		})
@@ -169,6 +170,39 @@ func TestObserveDrainAcceptedResponseLostThenCompleted(t *testing.T) {
 	if len(f.lock.calls) != 3 ||
 		f.lock.calls[0] != "set" || f.lock.calls[1] != "set" || f.lock.calls[2] != "can" {
 		t.Fatalf("unexpected release or RPC sequence: finalizers=%v calls=%v", completed.Finalizers, f.lock.calls)
+	}
+}
+
+func TestObserveDrainCompletesAfterDeadlineWithoutNewAttempt(t *testing.T) {
+	f := newObserveFixture(t)
+	f.round(t)           // persist original start time
+	f.round(t)           // prepare the attempt
+	f.lock.canOK = false // a remote transaction still holds a lock
+	started := f.round(t)
+	before, err := readDrainAttempt(started)
+	if err != nil || before == nil || before.Phase != drainPhaseRequested {
+		t.Fatalf("drain request was not persisted: %#v %v", before, err)
+	}
+	f.c.now = func() time.Time { return time.Unix(20, 0).Add(24 * time.Hour) }
+	blocked := f.round(t)
+	still, err := readDrainAttempt(blocked)
+	if err != nil || still == nil || still.Phase != drainPhaseRequested ||
+		still.AttemptID != before.AttemptID || len(blocked.Finalizers) != 1 {
+		t.Fatalf("overdue drain lost its attempt or protection: %#v %v", still, err)
+	}
+	if len(f.lock.calls) != 2 || f.lock.calls[0] != "set" || f.lock.calls[1] != "can" {
+		t.Fatalf("overdue drain stopped observing completion: %v", f.lock.calls)
+	}
+
+	f.lock.canOK = true // the held transaction commits after the deadline
+	completed := f.round(t)
+	after, err := readDrainAttempt(completed)
+	if err != nil || after == nil || after.Phase != drainPhaseCompleted ||
+		after.AttemptID != before.AttemptID || len(completed.Finalizers) != 0 {
+		t.Fatalf("same overdue attempt did not complete safely: %#v %v", after, err)
+	}
+	if len(f.lock.calls) != 3 || f.lock.calls[2] != "can" {
+		t.Fatalf("completion restarted drain instead of querying it: %v", f.lock.calls)
 	}
 }
 

@@ -629,10 +629,10 @@ func (c *withCNSet) OnPreparingStop(ctx *recon.Context[*corev1.Pod]) error {
 	if attempt.Phase == drainPhaseCompleted {
 		return c.completeDraining(ctx, ctx.Obj.DeepCopy())
 	}
-	// check whether timeout is reached
-	if c.currentTime().Sub(startTime) > sc.GetStoreDrainTimeout() {
-		return drainBlocked(ctx, "store draining timeout; refusing unsafe CN deletion")
-	}
+	// A drain deadline is an alert threshold, not a terminal state. Keep the
+	// protection while observing the same attempt: a remote transaction may
+	// release its locks after this deadline without any unsafe force-delete.
+	overdue := c.currentTime().Sub(startTime) > sc.GetStoreDrainTimeout()
 
 	var connAndShardMigrated, lockMigrated bool
 	err = c.withMOClientSet(ctx, func(timeout context.Context, h *mocli.ClientSet) error {
@@ -669,6 +669,9 @@ func (c *withCNSet) OnPreparingStop(ctx *recon.Context[*corev1.Pod]) error {
 	}
 	if c.currentTime().Sub(startTime) > storeDrainTakesLongDuration {
 		c.diagnosisDraining(ctx, uid)
+	}
+	if overdue {
+		return drainBlocked(ctx, "store draining timeout; continuing safe CN drain observation")
 	}
 	return recon.ErrReSync("wait for CN store draining", retryInterval)
 }

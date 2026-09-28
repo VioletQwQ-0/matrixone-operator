@@ -32,6 +32,8 @@ github.com/VictoriaMetrics/metrics v1.18.1 h1:OZ0+kTTto8oPfHnVAnTOoyl0XlRhRkoQrD
 github.com/VictoriaMetrics/metrics v1.18.1/go.mod h1:ArjwVz7WpgpegX/JpB0zpNF2h2232kErkEnzH1sxMmA=
 github.com/VioletQwQ-0/matrixone v0.7.1-0.20260923134614-c742b6a6f1ec h1:vpMzI60WN+oTGoq6yrEXWQcYfZkB4lFYg6bzflxIyfo=
 github.com/VioletQwQ-0/matrixone v0.7.1-0.20260923134614-c742b6a6f1ec/go.mod h1:g9A88LgRcksgy2ZLYbd7NCOwfW2vj3vMljmU84pSWvk=
+github.com/VioletQwQ-0/matrixone v0.7.1-0.20260928031005-06bcdb8b2742 h1:9fB5URVugkomOB9hcPpoWhZZmcK4c8Q7zUQWplyMxNM=
+github.com/VioletQwQ-0/matrixone v0.7.1-0.20260928031005-06bcdb8b2742/go.mod h1:UkiaGOAMkvEQrfwEIIr6g3B0hl2gG9lta/HADP8rbAY=
 github.com/ajg/form v1.5.1/go.mod h1:uL1WgH+h2mgNtvBq0339dVnzXdBETtL2LeUXaIv25UY=
 github.com/ajstarks/svgo v0.0.0-20180226025133-644b8db467af/go.mod h1:K08gAheRH3/J6wwsYMMT4xOr94bZjxIelGM0+d/wbFw=
 github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=

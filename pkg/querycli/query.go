@@ -84,7 +84,7 @@ func (c *Client) GetReplicaCount(ctx context.Context, address string) (pb.GetRep
 func (c *Client) GetLockServiceIdentity(ctx context.Context, address string) (string, string, error) {
 	resp, err := c.SendReq(ctx, address, &pb.Request{
 		CmdMethod:          pb.CmdMethod_GetLockInfo,
-		GetLockInfoRequest: &pb.GetLockInfoRequest{},
+		GetLockInfoRequest: &pb.GetLockInfoRequest{IdentityOnly: true},
 	})
 	if err != nil {
 		return "", "", errors.WrapPrefix(err, "query CN lock-service identity", 0)
