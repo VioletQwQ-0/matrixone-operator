@@ -190,7 +190,7 @@ func TestObserveDrainCompletesAfterDeadlineWithoutNewAttempt(t *testing.T) {
 		still.AttemptID != before.AttemptID || len(blocked.Finalizers) != 1 {
 		t.Fatalf("overdue drain lost its attempt or protection: %#v %v", still, err)
 	}
-	if len(f.lock.calls) != 2 || f.lock.calls[0] != "set" || f.lock.calls[1] != "can" {
+	if len(f.lock.calls) != 3 || f.lock.calls[0] != "set" || f.lock.calls[1] != "can" || f.lock.calls[2] != "remain" {
 		t.Fatalf("overdue drain stopped observing completion: %v", f.lock.calls)
 	}
 
@@ -201,7 +201,7 @@ func TestObserveDrainCompletesAfterDeadlineWithoutNewAttempt(t *testing.T) {
 		after.AttemptID != before.AttemptID || len(completed.Finalizers) != 0 {
 		t.Fatalf("same overdue attempt did not complete safely: %#v %v", after, err)
 	}
-	if len(f.lock.calls) != 3 || f.lock.calls[2] != "can" {
+	if len(f.lock.calls) != 4 || f.lock.calls[3] != "can" {
 		t.Fatalf("completion restarted drain instead of querying it: %v", f.lock.calls)
 	}
 }
