@@ -10,7 +10,7 @@ RUN go env -w GOPROXY=${GOPROXY}
 # The pinned MatrixOne module uses CGO for its allocator and lock-service
 # dependencies. Build native libraries from that exact module version rather
 # than linking against libraries from a different MatrixOne checkout.
-RUN apt-get update && apt-get install -y --no-install-recommends cmake g++ make bzip2 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends cmake g++ make bzip2 git && rm -rf /var/lib/apt/lists/*
 
 COPY go.mod go.mod
 COPY go.sum go.sum
@@ -23,9 +23,11 @@ RUN --mount=type=cache,id=gomodcache,target=/go/pkg/mod go mod download
 
 RUN --mount=type=cache,id=gomodcache,target=/go/pkg/mod \
     mo_dir="$(go list -m -f '{{.Dir}}' github.com/matrixorigin/matrixone)" && \
+    test -n "${mo_dir}" && \
+    chmod u+w "${mo_dir}" && \
     chmod -R u+w "${mo_dir}/thirdparties" "${mo_dir}/cgo" && \
-    make -C "${mo_dir}/thirdparties" -j4 usearch xxhash croaring jemalloc && \
-    make -C "${mo_dir}/cgo" -j4
+    chmod u+x "${mo_dir}/cgo/mo-native-provenance" "${mo_dir}/cgo/mo-stage-native-libs" "${mo_dir}/thirdparties/download" && \
+    make -C "${mo_dir}" -j4 cgo
 
 COPY . .
 

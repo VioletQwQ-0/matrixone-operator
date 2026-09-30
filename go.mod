@@ -247,4 +247,4 @@ replace (
 	k8s.io/sample-apiserver => k8s.io/sample-apiserver v0.27.2
 )
 
-replace github.com/matrixorigin/matrixone => github.com/VioletQwQ-0/matrixone v0.7.1-0.20260928031005-06bcdb8b2742
+replace github.com/matrixorigin/matrixone => github.com/VioletQwQ-0/matrixone v0.7.1-0.20260930031329-b350c0c82e83

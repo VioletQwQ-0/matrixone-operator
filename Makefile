@@ -36,10 +36,13 @@ push:
 # them in that module's directory so its SRCDIR-relative CGO flags resolve.
 .PHONY: matrixone-native
 matrixone-native:
-	@mo_dir="$$(GOWORK=off go list -m -f '{{.Dir}}' github.com/matrixorigin/matrixone)" && \
+	@GOWORK=off go mod download github.com/matrixorigin/matrixone && \
+		mo_dir="$$(GOWORK=off go list -m -f '{{.Dir}}' github.com/matrixorigin/matrixone)" && \
+		test -n "$$mo_dir" && \
+		chmod u+w "$$mo_dir" && \
 		chmod -R u+w "$$mo_dir/thirdparties" "$$mo_dir/cgo" && \
-		$(MAKE) -C "$$mo_dir/thirdparties" -j4 usearch xxhash croaring jemalloc && \
-		$(MAKE) -C "$$mo_dir/cgo" -j4
+		chmod u+x "$$mo_dir/cgo/mo-native-provenance" "$$mo_dir/cgo/mo-stage-native-libs" "$$mo_dir/thirdparties/download" && \
+		$(MAKE) -C "$$mo_dir" -j4 cgo
 
 # Build manager binary
 manager: generate fmt vet matrixone-native

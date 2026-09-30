@@ -52,13 +52,32 @@ function hack::ensure_kind() {
     chmod +x $KIND_BIN
 }
 
-function kind::prepare_image() {
-    if [ ! $(docker image ls ${2} --format="true") ] ;
-    then
-        docker pull ${2}
+function kind::prepare_image() (
+    local cluster="$1"
+    local image="$2"
+    local platform="linux/${ARCH}"
+    local archive
+    local local_platform
+    local save_help
+    local -a save_args
+
+    # Export only the node platform. On containerd-backed Docker, an unbounded
+    # save may fetch missing platforms/attestations from the registry even after
+    # a successful pull. Older Docker uses the legacy single-platform store.
+    local_platform=$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${image}" 2>/dev/null) || local_platform=""
+    if [[ "${local_platform}" != "${platform}" ]]; then
+        docker pull --platform "${platform}" "${image}" || return
     fi
-    kind load docker-image --name ${1} ${2}
-}
+    archive=$(mktemp) || return
+    trap 'rm -f -- "${archive}"' EXIT
+    save_help=$(docker image save --help) || return
+    save_args=(image save -o "${archive}")
+    if [[ "${save_help}" == *"--platform"* ]]; then
+        save_args+=(--platform "${platform}")
+    fi
+    docker "${save_args[@]}" "${image}" || return
+    kind load image-archive --name "${cluster}" "${archive}"
+)
 
 function kind::cleanup() {
     echo "> Tearing down"
@@ -74,7 +93,7 @@ function kind::ensure-kind() {
     kind create cluster --name "${CLUSTER}"
     kubectl apply -f test/kind-rbac.yml
     make build
-    kind load docker-image --name "${CLUSTER}" ${REPO}:${TAG}
+    kind::prepare_image "${CLUSTER}" "${REPO}:${TAG}"
 
     echo "> Ensure k8s cluster is ready"
     kubectl cluster-info
@@ -95,10 +114,10 @@ function kind::load-image() {
         return 1
     fi
 
-    kind::prepare_image ${CLUSTER} ${MO_IMAGE_REPO}:${MO_VERSION}
-    kind::prepare_image ${CLUSTER} "${kruise_image}"
-    kind::prepare_image ${CLUSTER} "${kruise_hook_image}"
-    kind::prepare_image ${CLUSTER} quay.io/minio/minio:RELEASE.2023-11-01T01-57-10Z
+    kind::prepare_image "${CLUSTER}" "${MO_IMAGE_REPO}:${MO_VERSION}"
+    kind::prepare_image "${CLUSTER}" "${kruise_image}"
+    kind::prepare_image "${CLUSTER}" "${kruise_hook_image}"
+    kind::prepare_image "${CLUSTER}" quay.io/minio/minio:RELEASE.2023-11-01T01-57-10Z
 }
 
 function kind::install-minio() {
