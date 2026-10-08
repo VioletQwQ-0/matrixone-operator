@@ -25,6 +25,7 @@ docker() {
             fi
             ;;
         "pull --platform") return "${pull_error}" ;;
+        "build --platform") return "${build_error}" ;;
         *) echo "unexpected docker invocation: $*" >&2; return 99 ;;
     esac
 }
@@ -38,7 +39,7 @@ kind() {
 
 reset_case() {
     : > "${calls}"
-    cached=true modern=true pull_error=0 save_error=0 load_error=0
+    cached=true modern=true pull_error=0 save_error=0 load_error=0 build_error=0
 }
 
 reset_case
@@ -76,4 +77,39 @@ for failure in pull save load; do
         load) [[ "${status}" == 9 ]] ;;
     esac
 done
-echo 'PASS: platform-scoped kind image export and failure propagation'
+
+reset_case
+CLUSTER=fixture
+kind::prepare_minio
+grep -q -- "docker build --platform linux/amd64 -f ${ROOT}/hack/Dockerfile.minio -t ${E2E_MINIO_IMAGE}" "${calls}"
+grep -q -- "--platform linux/amd64 ${E2E_MINIO_IMAGE}" "${calls}"
+! grep -q 'docker pull' "${calls}"
+
+reset_case
+build_error=10
+if kind::prepare_minio; then
+    echo 'expected MinIO build failure' >&2
+    exit 1
+else
+    [[ "$?" == 10 ]]
+fi
+! grep -q 'docker image inspect' "${calls}"
+! grep -q 'kind load' "${calls}"
+
+kubectl() {
+    printf 'kubectl %s\n' "$*" >> "${calls}"
+    [[ "$*" == '-n default apply -f -' ]]
+    local manifest
+    manifest=$(cat)
+    [[ "${manifest}" == *"image: ${E2E_MINIO_IMAGE}"* ]]
+    [[ "${manifest}" != *'image: quay.io/minio/minio:'* ]]
+    # The real multi-document fixture must keep its Service and Secret as well.
+    [[ "${manifest}" == *'kind: StatefulSet'* ]]
+    [[ "${manifest}" == *'kind: Service'* ]]
+    [[ "${manifest}" == *'kind: Secret'* ]]
+}
+reset_case
+kind::install-minio
+grep -q 'kubectl -n default apply -f -' "${calls}"
+
+echo 'PASS: platform-scoped kind images, pinned MinIO build/install and failure propagation'

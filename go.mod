@@ -12,7 +12,7 @@ require (
 	github.com/golang/mock v1.6.0
 	github.com/google/go-cmp v0.7.0
 	github.com/matrixorigin/controller-runtime v0.0.0-20240909085031-5f706d779ec6
-	github.com/matrixorigin/matrixone v0.7.1-0.20241008071244-fa8af5c4dad4
+	github.com/matrixorigin/matrixone v0.7.1-0.20261004020908-5e965dece9ea
 	github.com/matrixorigin/matrixone-operator/api v0.0.0-20220926063007-e629f86256d2
 	github.com/minio/minio-go/v7 v7.0.99
 	github.com/onsi/ginkgo v1.16.5
@@ -246,5 +246,3 @@ replace (
 	k8s.io/pod-security-admission => k8s.io/pod-security-admission v0.27.2
 	k8s.io/sample-apiserver => k8s.io/sample-apiserver v0.27.2
 )
-
-replace github.com/matrixorigin/matrixone => github.com/VioletQwQ-0/matrixone v0.7.1-0.20260930031329-b350c0c82e83
